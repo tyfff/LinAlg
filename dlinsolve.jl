@@ -6,6 +6,36 @@ function mydot(a, b)
     acc
 end
 
+function forwardsub!(L::AbstractMatrix{T}, b, x = b) where T
+    n = LinAlg.checksquare(L)
+    @assert n == length(b)
+    for i in 1:n
+        invli = inv(L[i, i])
+        x[i] = b[i]
+        for j in 1:i-1
+            x[i] -= L[i, j]*x[j]
+        end
+        x[i] *= invli
+    end
+    x
+end
+forwardsub(L, b) = forwardsub!(L, copy(b))
+
+function backwardsub!(U::AbstractMatrix{T}, b, x = b) where T
+    n = LinAlg.checksquare(U)
+    @assert n == length(b)
+    for i in n:-1:1
+        invui = inv(U[i, i])
+        x[i] = b[i]
+        for j in i+1:n
+            x[i] -= U[i, j]*x[j]
+        end
+        x[i] *= invui
+    end
+    x
+end
+backwardsub(U, b) = backwardsub!(U, copy(b))
+
 function matmul!(c::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}) where T
     for i in eachindex(c)
         c[i] = 0
@@ -69,30 +99,37 @@ function mylu!(A::AbstractMatrix{T}) where T
                 A[maxidx, j], A[k, j] = A[k, j], A[maxidx, j]
             end
         end
-        pinv = inv(A[k, k]) # inverse of the pivot
-        # zero out the k-th col
-        for j in k+1:m
-            A[j, k] *= pinv
+        p_inv = inv(A[k, k])
+        for j in k+1:m   # i, j sequence?
+            A[j, k] *= p_inv
         end
-        # update
         for j in k+1:m
             for i in k+1:n
-                A[j, i] -= A[j, k] * A[k, i]
+                A[j, i] -= A[j, k]*A[k, i]
             end
-            
         end
     end
     LinAlg.UnitLowerTriangular(A), UpperTriangular(A), pidx
 end
 
-function pidx2perm(pidx)
-    n = length(pidx)
-    perm = collect(1:n)
+function pidx2perm!(dest, pidx)
+    @assert length(dest) == length(pidx)
     for i in eachindex(pidx)
-        perm[pidx[i]], perm[i] = perm[i], perm[pidx[i]]
+        dest[i], dest[pidx[i]] = dest[pidx[i]], dest[i]
     end
-    perm
+    dest
 end
+pidx2perm(pidx) = pidx2perm!(collect(1:endof(pidx)), pidx)
+
+lu_(A) = mylu!(copy(A))
+
+function linsolve!(A, b)
+    L, U, p = mylu!(A)
+    pidx2perm!(b, p)
+    forwardsub!(L, b)
+    backwardsub!(U, b)
+end
+linsolve(A, b) = linsolve!(copy(A), copy(b))
 
 function chol_!(A::AbstractMatrix{T}) where T
     @views @inbounds begin
@@ -111,3 +148,46 @@ function chol_!(A::AbstractMatrix{T}) where T
     end
 end
 chol_(A) = chol_!(copy(A))
+
+#######################
+# Tests
+#######################
+using Base.Test
+
+@testset "Substitution Tests" begin
+    A = rand(5,5)
+    L = LowerTriangular(A)
+    U = UpperTriangular(A)
+    b = rand(5)
+    @test b ≈ L*forwardsub(L, b)
+    @test b ≈ U*backwardsub(U, b)
+end
+
+@testset "LU Factorization Tests" begin
+    A = rand(5,5)
+    L, U, p = lu_(A)
+    perm = pidx2perm(p)
+    #println("---------- L -----------")
+    #display(LowerTriangular(L))
+    #println("---------- U -----------")
+    #display(U)
+    #println("----- pidx & perm ------")
+    #display(hcat(p, perm))
+    @test L*U ≈ A[perm, :]
+end
+
+@testset "Cholesky Factorization Tests" begin
+    A = rand(5,5)
+    A = A'A
+    L = chol_(A)
+    #println("---------- L -----------")
+    #display(L)
+    @test A ≈ L*L'
+end
+
+@testset "Linear Solve Tests" begin
+    A = rand(5, 5)
+    b = rand(5)
+    x = linsolve(A, b)
+    @test A*x ≈ b
+end
