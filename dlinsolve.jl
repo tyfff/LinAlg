@@ -135,12 +135,12 @@ function chol_!(A::AbstractMatrix{T}) where T
     @views @inbounds begin
         m, n = size(A)
         @assert m==n
-        alpha = A[1, 1] = sqrt(A[1, 1])
+        α = A[1, 1] = sqrt(A[1, 1])
         if n > 1
-            w = scale!(A[2:n, 1], inv(alpha))
+            ω = scale!(A[2:n, 1], inv(α))
             K = A[2:n, 2:n]
-            for j in eachindex(w), i in j:n-1
-                K[i, j] -= w[i]*w[j]'
+            for j in eachindex(ω), i in j:n-1
+                K[i, j] -= ω[i]*ω[j]'
             end
             chol_!(K)
         end
@@ -148,6 +148,46 @@ function chol_!(A::AbstractMatrix{T}) where T
     end
 end
 chol_(A) = chol_!(copy(A))
+
+
+function gram_schmidt(A::AbstractMatrix{T}) where T
+    m, n = size(A)
+    minmn = min(m, n)
+    Q = zeros(T, m, m)
+    R = zeros(T, m, n)
+    v = zeros(T, m)
+    @views for j in 1:minmn
+        @. v = A[:, j]
+        for i in 1:m-1
+            R[i, j] = Q[:, i]'A[:, j]
+            @. v -= R[i, j] * Q[:, i]
+        end
+        R[j, j] = norm(v)
+        @. Q[:, j] = v / R[j, j]
+    end
+    Q, R
+end
+
+function modified_gram_schmidt(A:: AbstractMatrix{T}) where T
+    m, n = size(A)
+    Q = zeros(T, m, m)
+    R = zeros(T, m, n)
+    minmn = min(m, n)
+    @views for i in 1:n
+        @. Q[:, i] = A[:, i]
+    end
+    @views for i in 1:minmn
+        R[i, i] = norm(Q[:, i])
+        @. Q[:, i] = Q[:, i] / R[i, i]
+        for j in i+1:n
+            R[i, j] = Q[:, i]'Q[:, j]
+            @. Q[:, j] -= R[i, j] * Q[:, i]
+        end
+    end
+    Q, R
+end
+
+
 
 #######################
 # Tests
@@ -190,4 +230,11 @@ end
     b = rand(5)
     x = linsolve(A, b)
     @test A*x ≈ b
+end
+
+@testset  "QR Factorization Tests" for A in [rand(5,5), rand(5, 4)]
+    Q, R = gram_schmidt(A)
+    @test Q * R ≈ A
+    Q, R = modified_gram_schmidt(A)
+    @test Q * R ≈ A
 end
